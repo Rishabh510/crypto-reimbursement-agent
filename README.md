@@ -29,6 +29,7 @@ Backend: `http://localhost:4000`
 just install
 just seed
 just dev
+just docker-dev
 just build
 just test
 just docker-up
@@ -36,7 +37,24 @@ just docker-up
 
 `just docker-up` starts production-style multi-stage Docker images with Docker Compose. The backend container seeds demo data on startup so the temporary memory starts empty for each fresh demo.
 
-For debugging, prefer direct local development with `just dev`; it uses `tsx watch` for the backend and Vite HMR for the frontend.
+For Docker-based debugging, use `just docker-dev`. It mounts the repo into both containers, runs backend `tsx watch`, and runs Vite HMR for the frontend. Use `just docker-dev-reset` when you want to clear the Docker volumes and reseed from scratch.
+
+For direct local development without Docker, use `just dev`; it uses the same backend watch and frontend HMR, but runs against your local Node install.
+
+### Preferred Docker debug loop
+
+```bash
+cd /Users/geetha/1claw/crypto-reimbursement-agent
+just docker-dev
+```
+
+This runs two containers plus the SQLite volume:
+
+- backend on `http://localhost:4000` with `tsx watch`
+- frontend on `http://localhost:5173` with Vite HMR
+- SQLite stored in the Docker volume `backend-data`
+
+Use this when you do not want to manage local ports, DB files, or multiple terminal processes yourself.
 
 If you do not have `just`, run the underlying npm or Docker commands directly.
 
@@ -55,3 +73,34 @@ V1 only allows the `mock` provider. The code includes a provider interface so `o
 3. Keep payment credentials out of git. Add future 1Claw, RPC, Razorpay, or webhook keys through local env vars or a secrets manager.
 4. For 1Claw testnet payouts, implement the existing `OneClawCryptoProvider` adapter in `backend/src/services/payments.ts`.
 5. For Razorpay, implement `RazorpayProvider` behind the same adapter and keep reimbursement approval flow unchanged.
+
+## 1Claw setup
+
+The project uses the 1Claw CLI through `npx @1claw/cli` without a global install. CLI config is kept in project-local `.home/`, which is gitignored.
+
+```bash
+just oneclaw-login
+just oneclaw-whoami
+```
+
+After login, bootstrap a demo vault and agent:
+
+```bash
+GEMINI_API_KEY=... just oneclaw-bootstrap
+```
+
+Optional values the bootstrap script will store when provided:
+
+```bash
+RPC_URL=...
+RAZORPAY_KEY_ID=...
+RAZORPAY_KEY_SECRET=...
+```
+
+The script creates:
+
+- a vault named `crypto-reimbursement-agent-dev`
+- an agent named `reimbursement-agent-dev`
+- an access policy granting the agent read access to `app/*`
+- secrets such as `app/gemini-api-key` when matching env vars are provided
+- `.env.oneclaw` with vault/agent ids for later app integration

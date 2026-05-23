@@ -1,0 +1,35 @@
+services:
+  backend:
+    image: node:25-alpine
+    working_dir: /app
+    command: sh -c "npm ci && npm run seed && npm run dev -w backend"
+    environment:
+      PORT: "4000"
+      DATABASE_PATH: /app/backend/data/reimbursements.db
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-flash-lite}
+    ports:
+      - "4000:4000"
+    volumes:
+      - .:/app
+      - backend-node-modules:/app/node_modules
+      - backend-data:/app/backend/data
+
+  frontend:
+    image: node:25-alpine
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev -w frontend"
+    environment:
+      VITE_API_PROXY_TARGET: http://backend:4000
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - frontend-node-modules:/app/node_modules
+
+volumes:
+  backend-data:
+  backend-node-modules:
+  frontend-node-modules:
