@@ -7,7 +7,7 @@ export type PaymentProvider = "mock" | "oneclaw_crypto" | "razorpay";
 export type PaymentRail = "mock" | "crypto" | "bank" | "upi";
 
 export type ReimbursementStatus =
-  | "submitted"
+  | "under_review"
   | "approved"
   | "rejected"
   | "paid";
@@ -149,10 +149,21 @@ export interface RuleRefreshResult {
 
 export interface DashboardSummary {
   totalSubmitted: number;
+  underReviewCount: number;
   safeCount: number;
   reviewCount: number;
   rejectCount: number;
   approvedCount: number;
   paidCount: number;
   totalAmount: number;
+}
+
+export interface AppState {
+  currentUser: User;
+  users: User[];
+  reimbursements: Reimbursement[];
+  policy: CompanyPolicyState;
+  summary: DashboardSummary;
+  messages: CompanyMessage[];
+  audit: AuditEvent[];
 }

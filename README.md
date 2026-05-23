@@ -30,9 +30,13 @@ just install
 just seed
 just dev
 just docker-dev
+just dev-logs backend
+just dev-logs frontend
 just build
 just test
 just docker-up
+just logs backend
+just logs frontend
 ```
 
 `just docker-up` starts production-style multi-stage Docker images with Docker Compose. The backend container seeds demo data on startup so the temporary memory starts empty for each fresh demo.
@@ -55,6 +59,20 @@ This runs two containers plus the SQLite volume:
 - SQLite stored in the Docker volume `backend-data`
 
 Use this when you do not want to manage local ports, DB files, or multiple terminal processes yourself.
+
+Docker commands run detached by default. Tail logs when needed:
+
+```bash
+just dev-logs backend
+just dev-logs frontend
+```
+
+For production-style Compose logs:
+
+```bash
+just logs backend
+just logs frontend
+```
 
 If you do not have `just`, run the underlying npm or Docker commands directly.
 

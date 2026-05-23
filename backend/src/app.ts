@@ -2,7 +2,7 @@ import "dotenv/config";
 import cors from "cors";
 import express from "express";
 import { z } from "zod";
-import type { DashboardSummary, Reimbursement } from "@crypto-reimbursement-agent/shared";
+import type { AppState, DashboardSummary, Reimbursement, User } from "@crypto-reimbursement-agent/shared";
 import {
   addAudit,
   getAuditEvents,
@@ -38,19 +38,27 @@ export function createApp() {
     res.json({ currentUser, users });
   });
 
+  app.get("/api/app-state", (req, res) => {
+    const users = getUsers();
+    const requested = String(req.header("x-user-id") ?? req.query.userId ?? "usr_admin");
+    const user = getUser(requested) ?? users[0];
+    const reimbursements = getReimbursements(user);
+    const state: AppState = {
+      currentUser: user,
+      users,
+      reimbursements,
+      policy: getPolicyState(),
+      summary: buildSummary(reimbursements),
+      messages: getMessages(),
+      audit: user.role === "admin" ? getAuditEvents() : []
+    };
+    res.json(state);
+  });
+
   app.get("/api/dashboard", (req, res) => {
     const user = currentUser(req);
     const reimbursements = getReimbursements(user);
-    const summary: DashboardSummary = {
-      totalSubmitted: reimbursements.length,
-      safeCount: reimbursements.filter((item) => item.recommendation.status === "safe_to_approve").length,
-      reviewCount: reimbursements.filter((item) => item.recommendation.status === "needs_review").length,
-      rejectCount: reimbursements.filter((item) => item.recommendation.status === "should_not_approve").length,
-      approvedCount: reimbursements.filter((item) => item.status === "approved").length,
-      paidCount: reimbursements.filter((item) => item.status === "paid").length,
-      totalAmount: reimbursements.reduce((sum, item) => sum + item.amount, 0)
-    };
-    res.json(summary);
+    res.json(buildSummary(reimbursements));
   });
 
   app.get("/api/reimbursements", (req, res) => {
@@ -71,7 +79,7 @@ export function createApp() {
         category: payload.category,
         reason: payload.reason,
         receiptUrl: payload.receiptUrl || undefined,
-        status: "submitted",
+        status: "under_review",
         payoutStatus: "not_started",
         submittedAt,
         recommendation: {
@@ -251,6 +259,19 @@ export function createApp() {
 
 function currentUser(req: express.Request) {
   return getUser(String(req.header("x-user-id") ?? "usr_admin")) ?? undefined;
+}
+
+function buildSummary(reimbursements: Reimbursement[]): DashboardSummary {
+  return {
+    totalSubmitted: reimbursements.length,
+    underReviewCount: reimbursements.filter((item) => item.status === "under_review").length,
+    safeCount: reimbursements.filter((item) => item.recommendation.status === "safe_to_approve").length,
+    reviewCount: reimbursements.filter((item) => item.recommendation.status === "needs_review").length,
+    rejectCount: reimbursements.filter((item) => item.recommendation.status === "should_not_approve").length,
+    approvedCount: reimbursements.filter((item) => item.status === "approved").length,
+    paidCount: reimbursements.filter((item) => item.status === "paid").length,
+    totalAmount: reimbursements.reduce((sum, item) => sum + item.amount, 0)
+  };
 }
 
 function requireAdmin(req: express.Request, res: express.Response) {

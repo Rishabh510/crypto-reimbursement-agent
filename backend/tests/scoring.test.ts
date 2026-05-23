@@ -37,7 +37,7 @@ function claim(overrides: Partial<Reimbursement>): Reimbursement {
     category: "meals",
     reason: "Deployment dinner",
     receiptUrl: "receipt",
-    status: "submitted",
+    status: "under_review",
     payoutStatus: "not_started",
     submittedAt: new Date().toISOString(),
     recommendation: {

@@ -298,7 +298,7 @@ async function main() {
       category: item.category,
       reason: item.reason,
       receiptUrl: item.receiptUrl || undefined,
-      status: "submitted",
+      status: "under_review",
       payoutStatus: "not_started",
       submittedAt,
       recommendation: await scoreReimbursement(
@@ -310,7 +310,7 @@ async function main() {
           category: item.category,
           reason: item.reason,
           receiptUrl: item.receiptUrl || undefined,
-          status: "submitted",
+            status: "under_review",
           payoutStatus: "not_started",
           submittedAt,
           recommendation: {
