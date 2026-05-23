@@ -1,0 +1,39 @@
+FROM node:25-alpine AS deps
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY backend/package.json backend/package.json
+COPY frontend/package.json frontend/package.json
+COPY shared/package.json shared/package.json
+
+RUN npm ci
+
+FROM node:25-alpine AS build
+
+WORKDIR /app
+
+COPY --from=deps /app/node_modules node_modules
+COPY package.json package-lock.json ./
+COPY backend backend
+COPY shared shared
+
+RUN npm run build -w shared && npm run build -w backend
+
+FROM node:25-alpine AS runtime
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+ENV PORT=4000
+ENV DATABASE_PATH=/app/backend/data/reimbursements.db
+
+COPY --from=deps /app/node_modules node_modules
+COPY --from=build /app/package.json /app/package-lock.json ./
+COPY --from=build /app/backend backend
+COPY --from=build /app/shared shared
+
+EXPOSE 4000
+
+CMD ["sh", "-c", "npm run seed && npx tsx backend/src/server.ts"]
