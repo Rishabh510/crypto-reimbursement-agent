@@ -21,6 +21,7 @@ import {
 import { refreshTemporaryMemory } from "./services/memory.js";
 import { scoreReimbursement } from "./services/scoring.js";
 import { getPaymentProvider } from "./services/payments.js";
+import { getScoringStatus } from "./services/llm.js";
 
 export function createApp() {
   const app = express();
@@ -50,9 +51,14 @@ export function createApp() {
       policy: getPolicyState(),
       summary: buildSummary(reimbursements),
       messages: getMessages(),
-      audit: user.role === "admin" ? getAuditEvents() : []
+      audit: user.role === "admin" ? getAuditEvents() : [],
+      scoring: getScoringStatus()
     };
     res.json(state);
+  });
+
+  app.get("/api/scoring/status", (_req, res) => {
+    res.json(getScoringStatus());
   });
 
   app.get("/api/dashboard", (req, res) => {
@@ -79,6 +85,8 @@ export function createApp() {
         category: payload.category,
         reason: payload.reason,
         receiptUrl: payload.receiptUrl || undefined,
+        receiptDataUrl: payload.receiptDataUrl || undefined,
+        receiptName: payload.receiptName || undefined,
         status: "under_review",
         payoutStatus: "not_started",
         submittedAt,
@@ -181,9 +189,37 @@ export function createApp() {
         action: "pay",
         entityType: "reimbursement",
         entityId: saved.id,
-        message: `Mock payout ${payout.externalReference} completed through ${payout.rail}.`
+        message: `Sandbox payout ${payout.externalReference} completed through ${payout.rail}.`
       });
       res.json({ reimbursement: saved, payout });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/reimbursements/pay-approved", async (req, res, next) => {
+    try {
+      const user = requireAdmin(req, res);
+      if (!user) return;
+      const policy = getPolicyState();
+      const provider = getPaymentProvider(policy.config.paymentProvider);
+      const approved = getReimbursements().filter((item) => item.status === "approved");
+      const results = await Promise.all(
+        approved.map(async (reimbursement) => {
+          const payout = await provider.pay(reimbursement);
+          reimbursement.status = "paid";
+          reimbursement.payoutStatus = payout.status;
+          return { reimbursement: updateReimbursement(reimbursement), payout };
+        })
+      );
+      addAudit({
+        actorId: user.id,
+        action: "pay_approved",
+        entityType: "reimbursement",
+        entityId: "bulk",
+        message: `${user.name} paid ${results.length} approved claim${results.length === 1 ? "" : "s"}.`
+      });
+      res.json({ paidCount: results.length, results });
     } catch (error) {
       next(error);
     }
@@ -302,7 +338,9 @@ const reimbursementInput = z.object({
   currency: z.enum(["INR", "USD", "USDC"]),
   category: z.enum(["travel", "meals", "software", "wellness", "equipment", "event", "other"]),
   reason: z.string().min(8),
-  receiptUrl: z.string().optional()
+  receiptUrl: z.string().optional(),
+  receiptDataUrl: z.string().optional(),
+  receiptName: z.string().optional()
 });
 
 const ruleInput = z.object({

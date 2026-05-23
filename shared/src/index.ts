@@ -62,7 +62,7 @@ export interface CompanyRule {
   keywords: string[];
   requiresReceipt: boolean;
   activeUntil?: string;
-  source?: "admin" | "mock_slack" | "mock_whatsapp" | "llm";
+  source?: "admin" | "whatsapp" | "llm";
 }
 
 export interface CompanyConfig {
@@ -101,6 +101,8 @@ export interface Reimbursement {
   category: RuleCategory;
   reason: string;
   receiptUrl?: string;
+  receiptDataUrl?: string;
+  receiptName?: string;
   status: ReimbursementStatus;
   payoutStatus: PayoutStatus;
   submittedAt: string;
@@ -158,6 +160,12 @@ export interface DashboardSummary {
   totalAmount: number;
 }
 
+export interface ScoringStatus {
+  model: string;
+  llmEnabled: boolean;
+  fallbackModel: string;
+}
+
 export interface AppState {
   currentUser: User;
   users: User[];
@@ -166,4 +174,5 @@ export interface AppState {
   summary: DashboardSummary;
   messages: CompanyMessage[];
   audit: AuditEvent[];
+  scoring: ScoringStatus;
 }

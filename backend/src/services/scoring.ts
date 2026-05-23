@@ -1,6 +1,6 @@
 import type { CompanyPolicyState, CompanyRule, Reimbursement, Recommendation } from "@crypto-reimbursement-agent/shared";
 import { nowIso } from "../db.js";
-import { scoreWithLlm } from "./llm.js";
+import { fallbackScoringModel, scoreWithLlm } from "./llm.js";
 
 export async function scoreReimbursement(
   reimbursement: Reimbursement,
@@ -23,7 +23,7 @@ export function scoreDeterministically(reimbursement: Reimbursement, policy: Com
   const reasons: string[] = [];
   const matchedRuleIds = matched.map((rule) => rule.id);
 
-  if (!reimbursement.receiptUrl) {
+  if (!reimbursement.receiptUrl && !reimbursement.receiptDataUrl) {
     score -= 25;
     reasons.push("Receipt is missing.");
   }
@@ -77,7 +77,7 @@ export function scoreDeterministically(reimbursement: Reimbursement, policy: Com
     summary,
     reasons,
     matchedRuleIds,
-    model: "deterministic-policy-v1",
+    model: fallbackScoringModel,
     scoredAt: nowIso()
   };
 }

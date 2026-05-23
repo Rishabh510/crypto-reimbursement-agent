@@ -4,7 +4,6 @@ import {
   BadgeCheck,
   Ban,
   Banknote,
-  Brain,
   Building2,
   CheckCircle2,
   ChevronDown,
@@ -13,6 +12,7 @@ import {
   CreditCard,
   FileText,
   IndianRupee,
+  Info,
   LayoutDashboard,
   MessageSquareText,
   RefreshCw,
@@ -20,7 +20,9 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
-  UserRound
+  UserRound,
+  Wallet,
+  X
 } from "lucide-react";
 import type {
   AppState,
@@ -37,12 +39,15 @@ import "./styles.css";
 const API = "";
 const defaultUserId = localStorage.getItem("app_user_id") ?? "usr_admin";
 
-type Tab = "reimbursements" | "submit" | "policy" | "audit";
+type Tab = "reimbursements" | "policy" | "audit";
+type Toast = { id: string; message: string; tone: "success" | "error" | "info" };
 
 function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [tab, setTab] = useState<Tab>("reimbursements");
   const [busy, setBusy] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [receiptPreview, setReceiptPreview] = useState<Reimbursement | null>(null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [refreshState, setRefreshState] = useState<{
     active: boolean;
@@ -70,11 +75,22 @@ function App() {
 
   const isAdmin = state.currentUser.role === "admin";
 
+  function showToast(message: string, tone: Toast["tone"] = "info") {
+    const toast = { id: crypto.randomUUID(), message, tone };
+    setToasts((current) => [...current, toast]);
+    window.setTimeout(() => {
+      setToasts((current) => current.filter((item) => item.id !== toast.id));
+    }, 3200);
+  }
+
   async function action(label: string, fn: () => Promise<void>) {
     setBusy(label);
     try {
       await fn();
+      showToast("Action completed.", "success");
       await load();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Action failed.", "error");
     } finally {
       setBusy(null);
     }
@@ -110,8 +126,7 @@ function App() {
 
   const navItems = [
     { id: "reimbursements" as const, label: "Reimbursements", icon: LayoutDashboard, show: true },
-    { id: "submit" as const, label: "New claim", icon: Send, show: true },
-    { id: "policy" as const, label: "Policy memory", icon: Brain, show: isAdmin },
+    { id: "policy" as const, label: "Settings", icon: Settings, show: isAdmin },
     { id: "audit" as const, label: "Audit log", icon: Clock3, show: isAdmin }
   ].filter((item) => item.show);
 
@@ -174,35 +189,70 @@ function App() {
             <small>{isAdmin ? "Admin workspace" : "Employee workspace"}</small>
             <h1>{pageTitle(tab)}</h1>
           </div>
-          <span className="status-chip">
-            <ShieldCheck size={15} />
-            {state.policy.config.paymentProvider === "mock" ? "Mock payout rail" : state.policy.config.paymentProvider}
-          </span>
         </header>
 
         {tab === "reimbursements" && (
           <ReimbursementsView
             summary={state.summary}
             policy={state.policy}
+            scoring={state.scoring}
             reimbursements={state.reimbursements}
             isAdmin={isAdmin}
+            currentUser={state.currentUser}
+            users={state.users}
             busy={busy}
+            onReceiptPreview={setReceiptPreview}
+            onClaimOptimistic={(claim) => {
+              setState((current) =>
+                current
+                  ? {
+                      ...current,
+                      reimbursements: [claim, ...current.reimbursements],
+                      summary: {
+                        ...current.summary,
+                        totalSubmitted: current.summary.totalSubmitted + 1,
+                        underReviewCount: current.summary.underReviewCount + 1,
+                        totalAmount: current.summary.totalAmount + claim.amount
+                      }
+                    }
+                  : current
+              );
+            }}
+            onClaimCreated={(claim) => {
+              setState((current) =>
+                current
+                  ? {
+                      ...current,
+                      reimbursements: current.reimbursements.map((item) =>
+                        item.id === claim.id || (item.id.startsWith("pending_") && item.userId === claim.userId)
+                          ? claim
+                          : item
+                      )
+                    }
+                  : current
+              );
+              showToast("Claim submitted for review.", "success");
+              void load();
+            }}
+            onClaimError={(message) => {
+              showToast(message, "error");
+              void load();
+            }}
+            onClaimNotice={showToast}
             onApprove={(id) => action(`approve-${id}`, () => request(`/api/reimbursements/${id}/approve`, state.currentUser.id, { method: "POST" }))}
             onReject={(id) => action(`reject-${id}`, () => request(`/api/reimbursements/${id}/reject`, state.currentUser.id, { method: "POST" }))}
             onPay={(id) => action(`pay-${id}`, () => request(`/api/reimbursements/${id}/pay`, state.currentUser.id, { method: "POST" }))}
+            onPayAll={() => action("pay-approved", () => request("/api/reimbursements/pay-approved", state.currentUser.id, { method: "POST" }))}
             onRescore={(id) =>
               action(`rescore-${id}`, () => request(`/api/reimbursements/${id}/re-score`, state.currentUser.id, { method: "POST" }))
             }
           />
         )}
 
-        {tab === "submit" && (
-          <SubmitClaim currentUser={state.currentUser} users={state.users} onCreated={() => load()} />
-        )}
-
         {tab === "policy" && isAdmin && (
           <PolicyMemory
             policy={state.policy}
+            scoring={state.scoring}
             messages={state.messages}
             refreshState={refreshState}
             busy={busy}
@@ -219,6 +269,8 @@ function App() {
         )}
 
         {tab === "audit" && isAdmin && <AuditLog audit={state.audit} />}
+        <ToastViewport toasts={toasts} onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))} />
+        {receiptPreview && <ReceiptModal reimbursement={receiptPreview} onClose={() => setReceiptPreview(null)} />}
       </main>
     </div>
   );
@@ -227,21 +279,42 @@ function App() {
 function ReimbursementsView(props: {
   summary: DashboardSummary;
   policy: CompanyPolicyState;
+  scoring: AppState["scoring"];
   reimbursements: Reimbursement[];
   isAdmin: boolean;
+  currentUser: User;
+  users: User[];
   busy: string | null;
+  onReceiptPreview: (claim: Reimbursement) => void;
+  onClaimOptimistic: (claim: Reimbursement) => void;
+  onClaimCreated: (claim: Reimbursement) => void;
+  onClaimError: (message: string) => void;
+  onClaimNotice: (message: string, tone?: Toast["tone"]) => void;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
   onPay: (id: string) => void;
+  onPayAll: () => void;
   onRescore: (id: string) => void;
 }) {
   return (
     <section className="stack">
+      <ClaimAccordion
+        currentUser={props.currentUser}
+        users={props.users}
+        onOptimistic={props.onClaimOptimistic}
+        onCreated={props.onClaimCreated}
+        onError={props.onClaimError}
+        onNotice={props.onClaimNotice}
+      />
       <SummaryCards summary={props.summary} isAdmin={props.isAdmin} />
       {props.isAdmin ? (
-        <AdminClaimsTable {...props} />
+        <AdminClaimsTable {...props} cycleDays={props.policy.config.cycleDays} />
       ) : (
-        <EmployeeClaimsByCycle reimbursements={props.reimbursements} cycleDays={props.policy.config.cycleDays} />
+        <EmployeeClaimsByCycle
+          reimbursements={props.reimbursements}
+          cycleDays={props.policy.config.cycleDays}
+          onReceiptPreview={props.onReceiptPreview}
+        />
       )}
     </section>
   );
@@ -279,78 +352,114 @@ function SummaryCards({ summary, isAdmin }: { summary: DashboardSummary; isAdmin
 
 function AdminClaimsTable(props: {
   reimbursements: Reimbursement[];
+  cycleDays: 14 | 30;
+  scoring: AppState["scoring"];
   busy: string | null;
+  onReceiptPreview: (claim: Reimbursement) => void;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
   onPay: (id: string) => void;
+  onPayAll: () => void;
   onRescore: (id: string) => void;
 }) {
+  const approvedCount = props.reimbursements.filter((item) => item.status === "approved").length;
+  const groups = groupByCycle(props.reimbursements, props.cycleDays);
   return (
-    <div className="panel">
+    <div className="stack">
+      <div className="panel review-toolbar">
       <div className="panel-head">
         <div>
           <h2>Review queue</h2>
           <p>Recommendations are internal finance signals. Employees only see claim status.</p>
+          <ScoringEngineStatus scoring={props.scoring} />
         </div>
+        <Tooltip text="Pays every approved claim in parallel through the configured payout provider. Disabled until at least one claim is approved.">
+          <button className="primary" onClick={props.onPayAll} disabled={!approvedCount || Boolean(props.busy)}>
+            <Wallet size={15} /> Pay all approved
+          </button>
+        </Tooltip>
       </div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Employee</th>
-              <th>Claim</th>
-              <th>Recommendation</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {props.reimbursements.map((item) => (
-              <tr key={item.id}>
-                <td>
-                  <PersonCell item={item} />
-                </td>
-                <td>
-                  <strong>
-                    {item.currency} {item.amount.toLocaleString("en-IN")}
-                  </strong>
-                  <small>
-                    {sentenceCase(item.category)} · {item.reason}
-                  </small>
-                </td>
-                <td>
-                  <RecommendationBadge item={item} />
-                </td>
-                <td>
-                  <StatusBadge status={item.status} />
-                  <small>{formatPayoutStatus(item.payoutStatus)}</small>
-                </td>
-                <td>
-                  <div className="actions">
-                    <button onClick={() => props.onRescore(item.id)} disabled={Boolean(props.busy)}>
-                      <RefreshCw size={15} /> Re-score
-                    </button>
-                    <button onClick={() => props.onApprove(item.id)} disabled={item.status === "paid" || Boolean(props.busy)}>
-                      <BadgeCheck size={15} /> Approve
-                    </button>
-                    <button onClick={() => props.onReject(item.id)} disabled={item.status === "paid" || Boolean(props.busy)}>
-                      <Ban size={15} /> Reject
-                    </button>
-                    <button onClick={() => props.onPay(item.id)} disabled={item.status !== "approved" || Boolean(props.busy)}>
-                      <Banknote size={15} /> Pay
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
-    </div>
+
+      {groups.map((group) => (
+        <div className="panel" key={group.label}>
+          <div className="panel-head compact-head">
+            <div>
+              <h2>{group.label}</h2>
+              <p>
+                {group.items.length} claim{group.items.length === 1 ? "" : "s"} · {formatMoney({
+                  currency: "INR",
+                  amount: group.items.reduce((sum, item) => sum + item.amount, 0)
+                })}
+              </p>
+            </div>
+            <span className="pill">{props.cycleDays}-day cycle</span>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Claim</th>
+                  <th>Submitted</th>
+                  <th>Recommendation</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {group.items.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <PersonCell item={item} />
+                    </td>
+                    <td>
+                      <ClaimSummary item={item} onReceiptPreview={props.onReceiptPreview} />
+                    </td>
+                    <td>
+                      <DateTimeCell value={item.submittedAt} />
+                    </td>
+                    <td>
+                      <RecommendationBadge item={item} />
+                    </td>
+                    <td>
+                      <StatusBadge status={item.status} />
+                    </td>
+                    <td>
+                      <AdminActionGroup
+                        item={item}
+                        busy={props.busy}
+                        onApprove={props.onApprove}
+                        onReject={props.onReject}
+                        onPay={props.onPay}
+                        onRescore={props.onRescore}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+      {!groups.length && (
+        <div className="panel">
+          <div className="empty">No reimbursements have been submitted yet.</div>
+        </div>
+      )}
+      </div>
   );
 }
 
-function EmployeeClaimsByCycle({ reimbursements, cycleDays }: { reimbursements: Reimbursement[]; cycleDays: 14 | 30 }) {
+function EmployeeClaimsByCycle({
+  reimbursements,
+  cycleDays,
+  onReceiptPreview
+}: {
+  reimbursements: Reimbursement[];
+  cycleDays: 14 | 30;
+  onReceiptPreview: (claim: Reimbursement) => void;
+}) {
   const groups = groupByCycle(reimbursements, cycleDays);
   return (
     <div className="cycle-list">
@@ -367,18 +476,16 @@ function EmployeeClaimsByCycle({ reimbursements, cycleDays }: { reimbursements: 
           <div className="employee-claims">
             {group.items.map((item) => (
               <article className="claim-card" key={item.id}>
-                <div>
-                  <strong>
-                    {item.currency} {item.amount.toLocaleString("en-IN")}
-                  </strong>
-                  <small>
-                    {sentenceCase(item.category)} · {new Date(item.submittedAt).toLocaleDateString()}
-                  </small>
-                  <p>{item.reason}</p>
+                <div className="claim-summary employee-summary">
+                  <ReceiptThumbnail item={item} onClick={() => onReceiptPreview(item)} />
+                  <div>
+                    <strong>{formatMoney(item)}</strong>
+                    <small>{sentenceCase(item.category)} · {new Date(item.submittedAt).toLocaleDateString()}</small>
+                    <p>{item.reason}</p>
+                  </div>
                 </div>
                 <div className="claim-status">
                   <StatusBadge status={item.status} />
-                  <small>{formatPayoutStatus(item.payoutStatus)}</small>
                 </div>
               </article>
             ))}
@@ -398,7 +505,9 @@ function RecommendationBadge({ item }: { item: Reimbursement }) {
   const entry = map[item.recommendation.status];
   return (
     <div className={`recommendation ${entry.className}`}>
-      <entry.icon size={18} />
+      <Tooltip text={recommendationTooltip(item)}>
+        <entry.icon size={18} />
+      </Tooltip>
       <div>
         <strong>
           {item.recommendation.score}/100 · {entry.label}
@@ -418,7 +527,11 @@ function RecommendationBadge({ item }: { item: Reimbursement }) {
 }
 
 function StatusBadge({ status }: { status: Reimbursement["status"] }) {
-  return <span className={`pill status-${status}`}>{status.replace("_", " ")}</span>;
+  return (
+    <Tooltip text={statusTooltip(status)}>
+      <span className={`pill status-${status}`}>{status.replace("_", " ")}</span>
+    </Tooltip>
+  );
 }
 
 function PersonCell({ item }: { item: Reimbursement }) {
@@ -435,41 +548,116 @@ function PersonCell({ item }: { item: Reimbursement }) {
   );
 }
 
-function SubmitClaim({ currentUser, users, onCreated }: { currentUser: User; users: User[]; onCreated: () => void }) {
+function ClaimAccordion(props: {
+  currentUser: User;
+  users: User[];
+  onOptimistic: (claim: Reimbursement) => void;
+  onCreated: (claim: Reimbursement) => void;
+  onError: (message: string) => void;
+  onNotice: (message: string, tone?: Toast["tone"]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="panel claim-accordion">
+      <button className="accordion-trigger" onClick={() => setOpen((value) => !value)}>
+        <span>
+          <strong>New reimbursement</strong>
+          <small>Submit a claim for this payment cycle</small>
+        </span>
+        <ChevronDown className={open ? "rotate" : ""} size={18} />
+      </button>
+      {open && (
+        <SubmitClaim
+          currentUser={props.currentUser}
+          users={props.users}
+          onOptimistic={props.onOptimistic}
+          onCreated={(claim) => {
+            props.onCreated(claim);
+            setOpen(false);
+          }}
+          onError={props.onError}
+          onNotice={props.onNotice}
+        />
+      )}
+    </section>
+  );
+}
+
+function SubmitClaim({
+  currentUser,
+  users,
+  onOptimistic,
+  onCreated,
+  onError,
+  onNotice
+}: {
+  currentUser: User;
+  users: User[];
+  onOptimistic: (claim: Reimbursement) => void;
+  onCreated: (claim: Reimbursement) => void;
+  onError: (message: string) => void;
+  onNotice: (message: string, tone?: Toast["tone"]) => void;
+}) {
   const employees = users.filter((user) => user.role === "employee");
-  const [form, setForm] = useState({
+  const initialForm = {
     userId: currentUser.role === "admin" ? employees[0]?.id ?? currentUser.id : currentUser.id,
     amount: 1200,
     currency: "INR",
     category: "meals",
     reason: "Team lunch after release freeze",
-    receiptUrl: "https://receipts.example/demo"
-  });
+    receiptUrl: "https://receipts.example/demo",
+    receiptDataUrl: sampleReceiptImageDataUrl(),
+    receiptName: "meal-receipt.png"
+  };
+  const [form, setForm] = useState(initialForm);
   const [busy, setBusy] = useState(false);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
+    const submittedAt = new Date().toISOString();
+    const tempId = `pending_${Date.now()}`;
+    const employee = users.find((user) => user.id === form.userId);
+    onOptimistic({
+      id: tempId,
+      userId: currentUser.role === "admin" ? form.userId : currentUser.id,
+      amount: Number(form.amount),
+      currency: form.currency as Reimbursement["currency"],
+      category: form.category as Reimbursement["category"],
+      reason: form.reason,
+      receiptUrl: form.receiptUrl || undefined,
+      receiptDataUrl: form.receiptDataUrl || undefined,
+      receiptName: form.receiptName || undefined,
+      status: "under_review",
+      payoutStatus: "not_started",
+      submittedAt,
+      employee,
+      recommendation: {
+        status: "needs_review",
+        score: 0,
+        summary: "Scoring in progress",
+        reasons: ["Waiting for policy evaluation."],
+        matchedRuleIds: [],
+        model: "pending",
+        scoredAt: submittedAt
+      }
+    });
     try {
-      await request("/api/reimbursements", currentUser.id, {
+      const saved = await request<Reimbursement>("/api/reimbursements", currentUser.id, {
         method: "POST",
         body: JSON.stringify({ ...form, amount: Number(form.amount) })
       });
-      onCreated();
+      onCreated(saved);
+      setForm(initialForm);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not submit claim.");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <section className="panel form-panel">
-      <div className="panel-head">
-        <div>
-          <h2>New reimbursement</h2>
-          <p>Claims move into under review after submission.</p>
-        </div>
-      </div>
-      <form onSubmit={submit} className="form-grid">
+      <form onSubmit={submit} className="form-grid embedded-form">
         {currentUser.role === "admin" && (
           <label>
             Employee
@@ -514,16 +702,44 @@ function SubmitClaim({ currentUser, users, onCreated }: { currentUser: User; use
           Receipt URL
           <input value={form.receiptUrl} onChange={(event) => setForm({ ...form, receiptUrl: event.target.value })} />
         </label>
+        <label className="wide">
+          Receipt preview
+          <select
+            value={form.receiptName}
+            onChange={(event) => {
+              const isPdf = event.target.value.endsWith(".pdf");
+              setForm({
+                ...form,
+                receiptName: event.target.value,
+                receiptDataUrl: isPdf ? sampleReceiptPdfDataUrl() : sampleReceiptImageDataUrl()
+              });
+            }}
+          >
+            <option value="meal-receipt.png">Image receipt</option>
+            <option value="software-invoice.pdf">PDF invoice</option>
+          </select>
+        </label>
         <button className="primary wide" disabled={busy}>
-          <Send size={16} /> Submit claim
+          {busy ? <RefreshCw className="spin" size={16} /> : <Send size={16} />} Submit claim
+        </button>
+        <button
+          type="button"
+          className="wide"
+          onClick={() => {
+            setForm(initialForm);
+            onNotice("Claim form reset.", "info");
+          }}
+          disabled={busy}
+        >
+          Reset form
         </button>
       </form>
-    </section>
   );
 }
 
 function PolicyMemory(props: {
   policy: CompanyPolicyState;
+  scoring: AppState["scoring"];
   messages: CompanyMessage[];
   refreshState: { active: boolean; visibleCount: number; lastMessage?: CompanyMessage; result?: RuleRefreshResult };
   busy: string | null;
@@ -545,6 +761,7 @@ function PolicyMemory(props: {
           <div>
             <h2>Company settings</h2>
             <p>Payment automation remains locked until testnet payout support is enabled.</p>
+            <ScoringEngineStatus scoring={props.scoring} />
           </div>
         </div>
         <div className="form-grid compact">
@@ -578,7 +795,7 @@ function PolicyMemory(props: {
                 })
               }
             >
-              <option value="mock">Mock payout</option>
+              <option value="mock">Sandbox payout</option>
               <option value="oneclaw_crypto">1Claw crypto</option>
               <option value="razorpay">Razorpay</option>
             </select>
@@ -596,8 +813,8 @@ function PolicyMemory(props: {
       <div className="panel">
         <div className="panel-head">
           <div>
-            <h2>Temporary memory</h2>
-            <p>Refresh cycle-specific rules from recent company messages.</p>
+            <h2>WhatsApp memory</h2>
+            <p>Refresh cycle-specific rules from the company WhatsApp group.</p>
           </div>
           <button className="primary" onClick={props.onRefresh} disabled={Boolean(props.busy)}>
             <Sparkles size={16} /> Refresh
@@ -776,19 +993,200 @@ function groupByCycle(reimbursements: Reimbursement[], cycleDays: 14 | 30) {
 function pageTitle(tab: Tab) {
   const titles: Record<Tab, string> = {
     reimbursements: "Reimbursements",
-    submit: "New claim",
-    policy: "Policy memory",
+    policy: "Settings",
     audit: "Audit log"
   };
   return titles[tab];
 }
 
-function formatPayoutStatus(status: Reimbursement["payoutStatus"]) {
-  return status.replace("_", " ");
-}
-
 function sentenceCase(value: string) {
   return value.slice(0, 1).toUpperCase() + value.slice(1);
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  return `${date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}, ${date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit"
+  })}`;
+}
+
+function formatMoney(item: Pick<Reimbursement, "currency" | "amount">) {
+  return `${item.currency} ${item.amount.toLocaleString("en-IN")}`;
+}
+
+function ClaimSummary({ item, onReceiptPreview }: { item: Reimbursement; onReceiptPreview: (claim: Reimbursement) => void }) {
+  return (
+    <div className="claim-summary">
+      <ReceiptThumbnail item={item} onClick={() => onReceiptPreview(item)} />
+      <div>
+        <strong>{formatMoney(item)}</strong>
+        <small>
+          {sentenceCase(item.category)} · {item.reason}
+        </small>
+        <small>{item.recommendation.model === "pending" ? "Scoring in progress" : `Scored by ${item.recommendation.model}`}</small>
+      </div>
+    </div>
+  );
+}
+
+function AdminActionGroup({
+  item,
+  busy,
+  onApprove,
+  onReject,
+  onPay,
+  onRescore
+}: {
+  item: Reimbursement;
+  busy: string | null;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+  onPay: (id: string) => void;
+  onRescore: (id: string) => void;
+}) {
+  return (
+    <div className="action-group">
+      <Tooltip text="Run the current scoring engine again against the latest settings and cycle memory.">
+        <button aria-label="Re-score" onClick={() => onRescore(item.id)} disabled={Boolean(busy)}>
+          <RefreshCw className={busy === `rescore-${item.id}` ? "spin" : ""} size={15} />
+        </button>
+      </Tooltip>
+      <Tooltip text="Approve this claim for payout.">
+        <button aria-label="Approve" onClick={() => onApprove(item.id)} disabled={item.status === "paid" || Boolean(busy)}>
+          <BadgeCheck size={15} />
+        </button>
+      </Tooltip>
+      <Tooltip text="Reject this claim and keep it out of payouts.">
+        <button aria-label="Reject" onClick={() => onReject(item.id)} disabled={item.status === "paid" || Boolean(busy)}>
+          <Ban size={15} />
+        </button>
+      </Tooltip>
+      <Tooltip text="Pay this claim through the configured payout provider after approval.">
+        <button aria-label="Pay" onClick={() => onPay(item.id)} disabled={item.status !== "approved" || Boolean(busy)}>
+          <Banknote size={15} />
+        </button>
+      </Tooltip>
+    </div>
+  );
+}
+
+function DateTimeCell({ value }: { value: string }) {
+  const date = new Date(value);
+  return (
+    <div className="date-cell">
+      <strong>{date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</strong>
+      <small>{date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</small>
+    </div>
+  );
+}
+
+function ScoringEngineStatus({ scoring }: { scoring: AppState["scoring"] }) {
+  return (
+    <div className={`engine-status ${scoring.llmEnabled ? "active" : "fallback"}`}>
+      <Info size={14} />
+      <span>{scoring.llmEnabled ? `Gemini active: ${scoring.model}` : `Fallback scoring: ${scoring.fallbackModel}`}</span>
+      <Tooltip
+        text={
+          scoring.llmEnabled
+            ? "New claims and re-score actions call Gemini. The API key is present in the backend environment and is never shown in the UI."
+            : "GEMINI_API_KEY is not set in the backend container, so new claims and re-score actions use deterministic policy scoring."
+        }
+      >
+        <Info size={14} />
+      </Tooltip>
+    </div>
+  );
+}
+
+function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
+  return (
+    <span className="tooltip-wrap">
+      {children}
+      <span className="tooltip-bubble" role="tooltip">
+        {text}
+      </span>
+    </span>
+  );
+}
+
+function recommendationTooltip(item: Reimbursement) {
+  return `${item.recommendation.model} scored this claim at ${item.recommendation.score}/100 on ${formatDateTime(
+    item.recommendation.scoredAt
+  )}.`;
+}
+
+function statusTooltip(status: Reimbursement["status"]) {
+  const text: Record<Reimbursement["status"], string> = {
+    under_review: "Submitted and waiting for finance action.",
+    approved: "Approved by finance and ready for payout.",
+    rejected: "Rejected by finance and excluded from payouts.",
+    paid: "Paid through the configured payout provider."
+  };
+  return text[status];
+}
+
+function ReceiptThumbnail({ item, onClick }: { item: Reimbursement; onClick: () => void }) {
+  if (!item.receiptDataUrl) {
+    return <span className="receipt-thumb empty-thumb">No receipt</span>;
+  }
+  const isPdf = item.receiptDataUrl.startsWith("data:application/pdf");
+  return (
+    <button className="receipt-thumb" onClick={onClick} title={item.receiptName ?? "View receipt"}>
+      {isPdf ? <FileText size={20} /> : <img src={item.receiptDataUrl} alt={item.receiptName ?? "Receipt"} />}
+    </button>
+  );
+}
+
+function ReceiptModal({ reimbursement, onClose }: { reimbursement: Reimbursement; onClose: () => void }) {
+  const isPdf = reimbursement.receiptDataUrl?.startsWith("data:application/pdf");
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <section className="receipt-modal" onClick={(event) => event.stopPropagation()}>
+        <header>
+          <div>
+            <h2>{reimbursement.receiptName ?? "Receipt"}</h2>
+            <small>
+              {formatMoney(reimbursement)} · {sentenceCase(reimbursement.category)}
+            </small>
+          </div>
+          <button onClick={onClose} aria-label="Close receipt">
+            <X size={18} />
+          </button>
+        </header>
+        {reimbursement.receiptDataUrl ? (
+          isPdf ? (
+            <iframe title="Receipt PDF" src={reimbursement.receiptDataUrl} />
+          ) : (
+            <img src={reimbursement.receiptDataUrl} alt={reimbursement.receiptName ?? "Receipt"} />
+          )
+        ) : (
+          <div className="empty">No receipt attached.</div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ToastViewport({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: string) => void }) {
+  return (
+    <div className="toast-viewport">
+      {toasts.map((toast) => (
+        <button className={`toast ${toast.tone}`} key={toast.id} onClick={() => onDismiss(toast.id)}>
+          {toast.message}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function sampleReceiptImageDataUrl() {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="240" viewBox="0 0 360 240"><rect width="360" height="240" fill="#f8fafc"/><rect x="24" y="24" width="312" height="192" rx="10" fill="#fff" stroke="#cbd5e1"/><text x="44" y="62" font-family="Arial" font-size="22" font-weight="700" fill="#0f172a">Receipt</text><text x="44" y="98" font-family="Arial" font-size="14" fill="#475569">Team lunch after release freeze</text><line x1="44" y1="126" x2="316" y2="126" stroke="#e2e8f0"/><text x="44" y="164" font-family="Arial" font-size="18" fill="#0f172a">Total</text><text x="252" y="164" font-family="Arial" font-size="18" font-weight="700" fill="#0f172a">INR 1200</text></svg>`;
+  return `data:image/svg+xml;base64,${btoa(svg)}`;
+}
+
+function sampleReceiptPdfDataUrl() {
+  return "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9Db3VudCAwID4+CmVuZG9iagp0cmFpbGVyCjw8IC9Sb290IDEgMCBSID4+CiUlRU9G";
 }
 
 async function request<T = unknown>(path: string, userId?: string, init?: RequestInit): Promise<T> {

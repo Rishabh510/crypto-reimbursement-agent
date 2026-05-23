@@ -61,6 +61,8 @@ db.exec(`
     category TEXT NOT NULL,
     reason TEXT NOT NULL,
     receipt_url TEXT,
+    receipt_data_url TEXT,
+    receipt_name TEXT,
     status TEXT NOT NULL,
     payout_status TEXT NOT NULL,
     recommendation TEXT NOT NULL,
@@ -95,6 +97,19 @@ db.exec(`
     created_at TEXT NOT NULL
   );
 `);
+
+for (const statement of [
+  "ALTER TABLE reimbursements ADD COLUMN receipt_data_url TEXT",
+  "ALTER TABLE reimbursements ADD COLUMN receipt_name TEXT"
+]) {
+  try {
+    db.exec(statement);
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("duplicate column")) {
+      throw error;
+    }
+  }
+}
 
 export function json<T>(value: T): string {
   return JSON.stringify(value);
@@ -195,6 +210,8 @@ export function rowToReimbursement(row: Record<string, unknown>): Reimbursement 
     category: row.category as Reimbursement["category"],
     reason: String(row.reason),
     receiptUrl: row.receipt_url ? String(row.receipt_url) : undefined,
+    receiptDataUrl: row.receipt_data_url ? String(row.receipt_data_url) : undefined,
+    receiptName: row.receipt_name ? String(row.receipt_name) : undefined,
     status: row.status as Reimbursement["status"],
     payoutStatus: row.payout_status as Reimbursement["payoutStatus"],
     submittedAt: String(row.submitted_at),
@@ -206,9 +223,9 @@ export function rowToReimbursement(row: Record<string, unknown>): Reimbursement 
 export function saveReimbursement(reimbursement: Reimbursement): Reimbursement {
   db.prepare(`
     INSERT INTO reimbursements (
-      id, user_id, amount, currency, category, reason, receipt_url, status,
-      payout_status, recommendation, submitted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, user_id, amount, currency, category, reason, receipt_url, receipt_data_url,
+      receipt_name, status, payout_status, recommendation, submitted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     reimbursement.id,
     reimbursement.userId,
@@ -217,6 +234,8 @@ export function saveReimbursement(reimbursement: Reimbursement): Reimbursement {
     reimbursement.category,
     reimbursement.reason,
     reimbursement.receiptUrl ?? null,
+    reimbursement.receiptDataUrl ?? null,
+    reimbursement.receiptName ?? null,
     reimbursement.status,
     reimbursement.payoutStatus,
     json(reimbursement.recommendation),

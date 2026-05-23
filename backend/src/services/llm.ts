@@ -9,6 +9,15 @@ import type {
 import { id, nowIso } from "../db.js";
 
 export const geminiModel = process.env.GEMINI_MODEL ?? "gemini-3.1-flash-lite";
+export const fallbackScoringModel = "deterministic-policy-v1";
+
+export function getScoringStatus() {
+  return {
+    model: geminiModel,
+    llmEnabled: Boolean(process.env.GEMINI_API_KEY),
+    fallbackModel: fallbackScoringModel
+  };
+}
 
 function client() {
   if (!process.env.GEMINI_API_KEY) {
@@ -60,7 +69,7 @@ Claim: ${JSON.stringify({
     currency: reimbursement.currency,
     category: reimbursement.category,
     reason: reimbursement.reason,
-    hasReceipt: Boolean(reimbursement.receiptUrl)
+    hasReceipt: Boolean(reimbursement.receiptUrl || reimbursement.receiptDataUrl)
   })}
 Rules: ${JSON.stringify([...policy.permanentRules, ...policy.temporaryRules])}`;
 

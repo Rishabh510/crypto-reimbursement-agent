@@ -15,10 +15,10 @@ export async function refreshTemporaryMemory(): Promise<RuleRefreshResult> {
 
   return saveRefreshRun({
     runId: id("run"),
-    model: llmRules?.length ? geminiModel : "mock-memory-extractor-v1",
+    model: llmRules?.length ? geminiModel : "deterministic-memory-v1",
     processedMessageCount: messages.length,
     temporaryRules,
-    summary: `Refreshed ${temporaryRules.length} temporary rules from ${messages.length} mocked Slack/WhatsApp messages.`,
+    summary: `Refreshed ${temporaryRules.length} temporary rules from ${messages.length} company WhatsApp messages.`,
     createdAt: nowIso()
   });
 }
@@ -82,6 +82,6 @@ function rule(category: CompanyRule["category"], title: string, description: str
     keywords,
     requiresReceipt: true,
     activeUntil: activeUntil.toISOString(),
-    source: "mock_slack"
+    source: "whatsapp"
   };
 }

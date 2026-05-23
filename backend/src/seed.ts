@@ -103,7 +103,7 @@ const policy: CompanyPolicyState = {
   updatedAt: nowIso()
 };
 
-const messages: CompanyMessage[] = [
+const messages: CompanyMessage[] = ([
   {
     id: "msg_001",
     source: "slack",
@@ -200,7 +200,11 @@ const messages: CompanyMessage[] = [
     text: "Payment cycle closes today at 6 PM. Submit investor demo, offsite dinner, and approved software claims.",
     createdAt: daysAgo(1)
   }
-];
+] as CompanyMessage[]).map((message) => ({
+  ...message,
+  source: "whatsapp",
+  channel: "Acme Finance WhatsApp"
+}));
 
 async function main() {
   db.exec(`
@@ -268,7 +272,9 @@ async function main() {
       currency: "INR",
       category: "meals",
       reason: "Late night dinner during release freeze support.",
-      receiptUrl: "https://receipts.example/dinner-isha"
+      receiptUrl: "https://receipts.example/dinner-isha",
+      receiptDataUrl: receiptImageDataUrl("Swiggy", "Release dinner", "INR 860"),
+      receiptName: "release-dinner.png"
     },
     {
       userId: "usr_kabir",
@@ -276,7 +282,9 @@ async function main() {
       currency: "INR",
       category: "software",
       reason: "Figma annual add-on discussed in design channel for contractor work.",
-      receiptUrl: "https://receipts.example/figma-kabir"
+      receiptUrl: "https://receipts.example/figma-kabir",
+      receiptDataUrl: receiptPdfDataUrl(),
+      receiptName: "figma-invoice.pdf"
     },
     {
       userId: "usr_meera",
@@ -284,7 +292,39 @@ async function main() {
       currency: "INR",
       category: "equipment",
       reason: "Gaming keyboard and mouse for home desk.",
-      receiptUrl: ""
+      receiptUrl: "",
+      receiptDataUrl: undefined,
+      receiptName: undefined
+    },
+    {
+      userId: "usr_meera",
+      amount: 3400,
+      currency: "INR",
+      category: "travel",
+      reason: "Bengaluru client meeting cab receipts for campaign review.",
+      receiptUrl: "https://receipts.example/bengaluru-cab",
+      receiptDataUrl: receiptImageDataUrl("Uber", "Bengaluru client cab", "INR 3400"),
+      receiptName: "bengaluru-cab.png"
+    },
+    {
+      userId: "usr_isha",
+      amount: 2450,
+      currency: "INR",
+      category: "software",
+      reason: "Cursor subscription for frontend sprint work.",
+      receiptUrl: "https://receipts.example/cursor",
+      receiptDataUrl: receiptPdfDataUrl(),
+      receiptName: "cursor-invoice.pdf"
+    },
+    {
+      userId: "usr_kabir",
+      amount: 1750,
+      currency: "INR",
+      category: "meals",
+      reason: "Mumbai offsite dinner reimbursement for design workshop.",
+      receiptUrl: "https://receipts.example/offsite-dinner",
+      receiptDataUrl: receiptImageDataUrl("Restaurant", "Mumbai offsite dinner", "INR 1750"),
+      receiptName: "offsite-dinner.png"
     }
   ] as const;
 
@@ -298,6 +338,8 @@ async function main() {
       category: item.category,
       reason: item.reason,
       receiptUrl: item.receiptUrl || undefined,
+      receiptDataUrl: item.receiptDataUrl,
+      receiptName: item.receiptName,
       status: "under_review",
       payoutStatus: "not_started",
       submittedAt,
@@ -310,7 +352,9 @@ async function main() {
           category: item.category,
           reason: item.reason,
           receiptUrl: item.receiptUrl || undefined,
-            status: "under_review",
+          receiptDataUrl: item.receiptDataUrl,
+          receiptName: item.receiptName,
+          status: "under_review",
           payoutStatus: "not_started",
           submittedAt,
           recommendation: {
@@ -328,9 +372,9 @@ async function main() {
     };
     db.prepare(`
       INSERT INTO reimbursements (
-        id, user_id, amount, currency, category, reason, receipt_url, status,
-        payout_status, recommendation, submitted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, user_id, amount, currency, category, reason, receipt_url, receipt_data_url,
+        receipt_name, status, payout_status, recommendation, submitted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       reimbursement.id,
       reimbursement.userId,
@@ -339,6 +383,8 @@ async function main() {
       reimbursement.category,
       reimbursement.reason,
       reimbursement.receiptUrl ?? null,
+      reimbursement.receiptDataUrl ?? null,
+      reimbursement.receiptName ?? null,
       reimbursement.status,
       reimbursement.payoutStatus,
       json(reimbursement.recommendation),
@@ -349,13 +395,22 @@ async function main() {
   db.prepare(`
     INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, message, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id("aud"), "usr_admin", "seed", "system", "default", "Demo data seeded.", nowIso());
+  `).run(id("aud"), "usr_admin", "seed", "system", "default", "Initial workspace data seeded.", nowIso());
 }
 
 function daysAgo(days: number): string {
   const date = new Date();
   date.setDate(date.getDate() - days);
   return date.toISOString();
+}
+
+function receiptImageDataUrl(merchant: string, description: string, amount: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="240" viewBox="0 0 360 240"><rect width="360" height="240" fill="#f8fafc"/><rect x="24" y="24" width="312" height="192" rx="10" fill="#fff" stroke="#cbd5e1"/><text x="44" y="62" font-family="Arial" font-size="22" font-weight="700" fill="#0f172a">${merchant}</text><text x="44" y="98" font-family="Arial" font-size="14" fill="#475569">${description}</text><line x1="44" y1="126" x2="316" y2="126" stroke="#e2e8f0"/><text x="44" y="164" font-family="Arial" font-size="18" fill="#0f172a">Total</text><text x="252" y="164" font-family="Arial" font-size="18" font-weight="700" fill="#0f172a">${amount}</text><text x="44" y="196" font-family="Arial" font-size="12" fill="#64748b">Receipt uploaded by employee</text></svg>`;
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
+
+function receiptPdfDataUrl(): string {
+  return "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9Db3VudCAwID4+CmVuZG9iagp0cmFpbGVyCjw8IC9Sb290IDEgMCBSID4+CiUlRU9G";
 }
 
 main().catch((error) => {
